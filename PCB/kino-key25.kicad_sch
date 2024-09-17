@@ -4,6 +4,12 @@
 	(generator_version "8.0")
 	(uuid "643d6f24-7dc5-473d-9f3e-1d00b489c9c7")
 	(paper "A2")
+	(title_block
+		(title "kino-key25")
+		(date "2024-09-17")
+		(rev "20240917")
+		(company "kinoshita laboratory")
+	)
 	(lib_symbols
 		(symbol "74xx:74HC165"
 			(exclude_from_sim no)
