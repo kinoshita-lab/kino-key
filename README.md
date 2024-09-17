@@ -1,6 +1,7 @@
 # Kino-Key25
 
-[[README.ja.md|日本語]]
+
+[日本語](README.ja.md)
 
 Open source piano-type keyboard MIDI controller project
 
