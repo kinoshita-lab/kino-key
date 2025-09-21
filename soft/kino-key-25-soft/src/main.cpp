@@ -43,7 +43,7 @@ struct NoteKeyInfo
     bool offOn     = false;
     int byKeyIndex = -1;
 };
-NoteKeyInfo noteKeyInfo[INT8_MAX];
+NoteKeyInfo noteKeyInfo[128];
 
 struct ControllerStatus
 {
