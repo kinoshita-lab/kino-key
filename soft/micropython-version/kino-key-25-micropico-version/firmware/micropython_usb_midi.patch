@@ -1,0 +1,225 @@
+diff --git a/shared/tinyusb/tusb_config.h b/shared/tinyusb/tusb_config.h
+--- a/shared/tinyusb/tusb_config.h
++++ b/shared/tinyusb/tusb_config.h
+@@ -69,6 +69,8 @@
+ #define CFG_TUD_CDC             (0)
+ #endif
+ 
++#define CFG_TUD_MIDI            (1)
++
+ #if MICROPY_HW_USB_MSC
+ #define CFG_TUD_MSC             (1)
+ #else
+@@ -102,6 +104,7 @@
+ #define USBD_STR_SERIAL (0x03)
+ #define USBD_STR_CDC (0x04)
+ #define USBD_STR_MSC (0x05)
++#define USBD_STR_MIDI (0x06)
+ 
+ #define USBD_MAX_POWER_MA (250)
+ 
+@@ -130,7 +133,37 @@
+ #endif // CFG_TUD_MSC
+ 
+ /* Limits of builtin USB interfaces, endpoints, strings */
++#if CFG_TUD_MIDI
++#ifndef CFG_TUD_MIDI_RX_BUFSIZE
++#define CFG_TUD_MIDI_RX_BUFSIZE 64
++#endif
++#ifndef CFG_TUD_MIDI_TX_BUFSIZE
++#define CFG_TUD_MIDI_TX_BUFSIZE 64
++#endif
++#endif
++
++#if CFG_TUD_MIDI
+ #if CFG_TUD_MSC
++#define USBD_ITF_MIDI (USBD_ITF_MSC + 1)
++#define EPNUM_MIDI_OUT (EPNUM_MSC_OUT + 1)
++#define EPNUM_MIDI_IN  (EPNUM_MSC_IN + 1)
++#elif CFG_TUD_CDC
++#define USBD_ITF_MIDI (USBD_ITF_CDC + 2)
++#define EPNUM_MIDI_OUT (USBD_CDC_EP_OUT + 1)
++#define EPNUM_MIDI_IN  (USBD_CDC_EP_IN + 1)
++#else
++#define USBD_ITF_MIDI (0)
++#define EPNUM_MIDI_OUT (0x01)
++#define EPNUM_MIDI_IN  (0x81)
++#endif
++#endif
++
++/* Limits of builtin USB interfaces, endpoints, strings */
++#if CFG_TUD_MIDI
++#define USBD_ITF_BUILTIN_MAX (USBD_ITF_MIDI + 2)
++#define USBD_STR_BUILTIN_MAX (USBD_STR_MIDI + 1)
++#define USBD_EP_BUILTIN_MAX ((EPNUM_MIDI_IN & ~TUSB_DIR_IN_MASK) + 1)
++#elif CFG_TUD_MSC
+ #define USBD_ITF_BUILTIN_MAX (USBD_ITF_MSC + 1)
+ #define USBD_STR_BUILTIN_MAX (USBD_STR_MSC + 1)
+ #define USBD_EP_BUILTIN_MAX (EPNUM_MSC_OUT + 1)
+diff --git a/shared/tinyusb/mp_usbd.h b/shared/tinyusb/mp_usbd.h
+--- a/shared/tinyusb/mp_usbd.h
++++ b/shared/tinyusb/mp_usbd.h
+@@ -92,11 +92,12 @@
+ // Length of built-in configuration descriptor
+ #define MP_USBD_BUILTIN_DESC_CFG_LEN (TUD_CONFIG_DESC_LEN +                     \
+     (CFG_TUD_CDC ? (TUD_CDC_DESC_LEN) : 0) +  \
+-    (CFG_TUD_MSC ? (TUD_MSC_DESC_LEN) : 0)    \
++    (CFG_TUD_MSC ? (TUD_MSC_DESC_LEN) : 0) +  \
++    (CFG_TUD_MIDI ? (TUD_MIDI_DESC_LEN) : 0)  \
+     )
+ 
+ // Built-in USB device and configuration descriptor values
+-extern const tusb_desc_device_t mp_usbd_builtin_desc_dev;
++extern tusb_desc_device_t mp_usbd_builtin_desc_dev;
+ extern const uint8_t mp_usbd_builtin_desc_cfg[MP_USBD_BUILTIN_DESC_CFG_LEN];
+ #if (CFG_TUD_MAX_SPEED == OPT_MODE_HIGH_SPEED)
+ extern const tusb_desc_device_qualifier_t mp_usbd_builtin_desc_qual;
+diff --git a/shared/tinyusb/mp_usbd_descriptor.c b/shared/tinyusb/mp_usbd_descriptor.c
+--- a/shared/tinyusb/mp_usbd_descriptor.c
++++ b/shared/tinyusb/mp_usbd_descriptor.c
+@@ -36,7 +36,7 @@
+ #define USBD_CDC_IN_OUT_MAX_SIZE ((CFG_TUD_MAX_SPEED == OPT_MODE_HIGH_SPEED) ? 512 : 64)
+ #define USBD_MSC_IN_OUT_MAX_SIZE ((CFG_TUD_MAX_SPEED == OPT_MODE_HIGH_SPEED) ? 512 : 64)
+ 
+-const tusb_desc_device_t mp_usbd_builtin_desc_dev = {
++tusb_desc_device_t mp_usbd_builtin_desc_dev = {
+     .bLength = sizeof(tusb_desc_device_t),
+     .bDescriptorType = TUSB_DESC_DEVICE,
+     .bcdUSB = 0x0200,
+@@ -79,7 +79,14 @@
+     #if CFG_TUD_MSC
+     TUD_MSC_DESCRIPTOR(USBD_ITF_MSC, USBD_STR_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, USBD_MSC_IN_OUT_MAX_SIZE),
+     #endif
++    #if CFG_TUD_MIDI
++    TUD_MIDI_DESCRIPTOR(USBD_ITF_MIDI, USBD_STR_MIDI, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, 64),
++    #endif
+ };
++
++char mp_usbd_custom_manufacturer[64] = "";
++char mp_usbd_custom_product[64] = "";
++char mp_usbd_custom_serial[64] = "";
+ 
+ const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
+     char serial_buf[MICROPY_HW_USB_DESC_STR_MAX + 1]; // Includes terminating NUL byte
+@@ -111,14 +118,18 @@
+         // Fall back to the "static" string
+         switch (index) {
+             case USBD_STR_SERIAL:
+-                mp_usbd_port_get_serial_number(serial_buf);
+-                desc_str = serial_buf;
++                if (mp_usbd_custom_serial[0]) {
++                    desc_str = mp_usbd_custom_serial;
++                } else {
++                    mp_usbd_port_get_serial_number(serial_buf);
++                    desc_str = serial_buf;
++                }
+                 break;
+             case USBD_STR_MANUF:
+-                desc_str = MICROPY_HW_USB_MANUFACTURER_STRING;
++                desc_str = mp_usbd_custom_manufacturer[0] ? mp_usbd_custom_manufacturer : MICROPY_HW_USB_MANUFACTURER_STRING;
+                 break;
+             case USBD_STR_PRODUCT:
+-                desc_str = MICROPY_HW_USB_PRODUCT_FS_STRING;
++                desc_str = mp_usbd_custom_product[0] ? mp_usbd_custom_product : MICROPY_HW_USB_PRODUCT_FS_STRING;
+                 break;
+             #if CFG_TUD_CDC
+             case USBD_STR_CDC:
+@@ -128,6 +139,11 @@
+             #if CFG_TUD_MSC
+             case USBD_STR_MSC:
+                 desc_str = MICROPY_HW_USB_MSC_INTERFACE_STRING;
++                break;
++            #endif
++            #if CFG_TUD_MIDI
++            case USBD_STR_MIDI:
++                desc_str = mp_usbd_custom_product[0] ? mp_usbd_custom_product : "Board MIDI";
+                 break;
+             #endif
+             default:
+diff --git a/ports/rp2/CMakeLists.txt b/ports/rp2/CMakeLists.txt
+--- a/ports/rp2/CMakeLists.txt
++++ b/ports/rp2/CMakeLists.txt
+@@ -186,6 +186,7 @@
+     usbd.c
+     msc_disk.c
+     mbedtls/mbedtls_port.c
++    modusb_midi.c
+     ${CMAKE_BINARY_DIR}/pins_${MICROPY_BOARD}.c
+ )
+ 
+@@ -207,6 +208,7 @@
+     ${MICROPY_PORT_DIR}/rp2_flash.c
+     ${MICROPY_PORT_DIR}/rp2_pio.c
+     ${MICROPY_PORT_DIR}/rp2_dma.c
++    ${MICROPY_PORT_DIR}/modusb_midi.c
+     ${CMAKE_BINARY_DIR}/pins_${MICROPY_BOARD}.c
+ )
+ 
+diff --git a/ports/rp2/modusb_midi.c b/ports/rp2/modusb_midi.c
+new file mode 100644
+--- /dev/null
++++ b/ports/rp2/modusb_midi.c
+@@ -0,0 +1,63 @@
++#include <stdio.h>
++#include "py/runtime.h"
++#ifndef NO_QSTR
++#include "tusb.h"
++#endif
++
++extern tusb_desc_device_t mp_usbd_builtin_desc_dev;
++extern char mp_usbd_custom_manufacturer[64];
++extern char mp_usbd_custom_product[64];
++extern char mp_usbd_custom_serial[64];
++
++static mp_obj_t usb_midi_set_info(size_t n_args, const mp_obj_t *args) {
++    if (n_args >= 2) {
++        mp_usbd_builtin_desc_dev.idVendor = mp_obj_get_int(args[0]);
++        mp_usbd_builtin_desc_dev.idProduct = mp_obj_get_int(args[1]);
++    }
++    if (n_args >= 3) {
++        const char *m = mp_obj_str_get_str(args[2]);
++        snprintf(mp_usbd_custom_manufacturer, sizeof(mp_usbd_custom_manufacturer), "%s", m);
++    }
++    if (n_args >= 4) {
++        const char *p = mp_obj_str_get_str(args[3]);
++        snprintf(mp_usbd_custom_product, sizeof(mp_usbd_custom_product), "%s", p);
++    }
++    if (n_args >= 5) {
++        const char *s = mp_obj_str_get_str(args[4]);
++        snprintf(mp_usbd_custom_serial, sizeof(mp_usbd_custom_serial), "%s", s);
++    }
++    return mp_const_none;
++}
++static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(usb_midi_set_info_obj, 2, 5, usb_midi_set_info);
++
++static mp_obj_t usb_midi_write(mp_obj_t buf_in) {
++    mp_buffer_info_t bufinfo;
++    mp_get_buffer_raise(buf_in, &bufinfo, MP_BUFFER_READ);
++    uint32_t written = tud_midi_stream_write(0, bufinfo.buf, bufinfo.len);
++    return mp_obj_new_int(written);
++}
++static MP_DEFINE_CONST_FUN_OBJ_1(usb_midi_write_obj, usb_midi_write);
++
++static mp_obj_t usb_midi_read(mp_obj_t len_in) {
++    uint32_t len = mp_obj_get_int(len_in);
++    vstr_t vstr;
++    vstr_init_len(&vstr, len);
++    uint32_t read = tud_midi_stream_read(0, vstr.buf, len);
++    vstr.len = read;
++    return mp_obj_new_bytes_from_vstr(&vstr);
++}
++static MP_DEFINE_CONST_FUN_OBJ_1(usb_midi_read_obj, usb_midi_read);
++
++static const mp_rom_map_elem_t usb_midi_module_globals_table[] = {
++    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_usb_midi) },
++    { MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&usb_midi_write_obj) },
++    { MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&usb_midi_read_obj) },
++    { MP_ROM_QSTR(MP_QSTR_set_info), MP_ROM_PTR(&usb_midi_set_info_obj) },
++};
++MP_DEFINE_CONST_DICT(usb_midi_module_globals, usb_midi_module_globals_table);
++
++const mp_obj_module_t usb_midi_module = {
++    .base = { &mp_type_module },
++    .globals = (mp_obj_dict_t *)&usb_midi_module_globals,
++};
++MP_REGISTER_MODULE(MP_QSTR_usb_midi, usb_midi_module);
