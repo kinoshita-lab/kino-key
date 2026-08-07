@@ -159,7 +159,7 @@ diff --git a/ports/rp2/modusb_midi.c b/ports/rp2/modusb_midi.c
 new file mode 100644
 --- /dev/null
 +++ b/ports/rp2/modusb_midi.c
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,74 @@
 +#include <stdio.h>
 +#include "py/runtime.h"
 +#ifndef NO_QSTR
@@ -213,7 +213,7 @@ new file mode 100644
 +    uint32_t len = (req > (mp_int_t)CFG_TUD_MIDI_RX_BUFSIZE) ? CFG_TUD_MIDI_RX_BUFSIZE : (uint32_t)req;
 +    vstr_t vstr;
 +    vstr_init_len(&vstr, len);
-+    uint32_t read = tud_midi_stream_read(0, vstr.buf, len);
++    uint32_t read = tud_midi_stream_read(vstr.buf, len);
 +    vstr.len = read;
 +    return mp_obj_new_bytes_from_vstr(&vstr);
 +}
@@ -221,14 +221,16 @@ new file mode 100644
 +
 +static const mp_rom_map_elem_t usb_midi_module_globals_table[] = {
 +    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_usb_midi) },
++    { MP_ROM_QSTR(MP_QSTR_set_info), MP_ROM_PTR(&usb_midi_set_info_obj) },
 +    { MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&usb_midi_write_obj) },
 +    { MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&usb_midi_read_obj) },
-+    { MP_ROM_QSTR(MP_QSTR_set_info), MP_ROM_PTR(&usb_midi_set_info_obj) },
 +};
-+MP_DEFINE_CONST_DICT(usb_midi_module_globals, usb_midi_module_globals_table);
 +
-+const mp_obj_module_t usb_midi_module = {
++static MP_DEFINE_CONST_DICT(usb_midi_module_globals, usb_midi_module_globals_table);
++
++const mp_obj_module_t mp_module_usb_midi = {
 +    .base = { &mp_type_module },
 +    .globals = (mp_obj_dict_t *)&usb_midi_module_globals,
 +};
-+MP_REGISTER_MODULE(MP_QSTR_usb_midi, usb_midi_module);
++
++MP_REGISTER_MODULE(MP_QSTR_usb_midi, mp_module_usb_midi);
